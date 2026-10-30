@@ -1,0 +1,38 @@
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+
+# IDE
+.vscode/
+.idea/
+
+# Logs and temporary files
+*.log
+*.tmp
+
+# Camera data and datasets
+data/
+datasets/
+images/
+videos/
+
+# Image and video files
+*.jpg
+*.jpeg
+*.png
+*.mp4
+*.avi
+*.mov
+
+# AI model weights
+*.pt
+*.pth
+*.onnx
+*.tflite
