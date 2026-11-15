@@ -25,7 +25,4 @@ torchvision==0.29.1
 typing_extensions==4.16.0
 tzdata==2026.5
 wheel==0.48.0
-fastapi
-uvicorn
-pydantic
 requests
