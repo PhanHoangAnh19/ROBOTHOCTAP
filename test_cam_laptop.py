@@ -2,7 +2,7 @@ import cv2
 import time
 import requests
 
-BACKEND_URL = "http://127.0.0"
+BACKEND_URL = "http://127.0.0.1:8000/sensor-event"
 
 cap = cv2.VideoCapture(0)
 last_alert_time = 0

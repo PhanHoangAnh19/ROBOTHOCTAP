@@ -36,3 +36,6 @@ videos/
 *.pth
 *.onnx
 *.tflite
+# Database (dữ liệu test local)
+*.db
+*.sqlite3

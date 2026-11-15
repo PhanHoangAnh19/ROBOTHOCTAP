@@ -1,3 +1,4 @@
+import os
 import sqlite3
 import json
 import urllib.request
@@ -15,8 +16,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-API_KEY = "DAN_MA_API_KEY_CUA_BAN_VAO_DAY"
-GEMINI_URL = f"https://googleapis.com{API_KEY}"
+# Đặt key bằng biến môi trường, KHÔNG ghi key thẳng vào code:
+#   PowerShell:  $env:GEMINI_API_KEY="..."
+API_KEY = os.getenv("GEMINI_API_KEY", "")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
 
 def init_db():
     conn = sqlite3.connect("robot_events.db")
@@ -72,14 +76,15 @@ def ask_ai(payload: AskPayload):
         req = urllib.request.Request(
             GEMINI_URL,
             data=json.dumps(data).encode("utf-8"),
-            headers={"Content-Type": "application/json"}
+            headers={"Content-Type": "application/json", "x-goog-api-key": API_KEY}
         )
         with urllib.request.urlopen(req, timeout=10) as res:
             result = json.loads(res.read().decode("utf-8"))
             answer = result["candidates"][0]["content"]["parts"][0]["text"].strip()
     except Exception as e:
+        print(f"Lỗi gọi Gemini: {e}")
         answer = f"[Chế độ Offline] Đã nhận câu hỏi '{payload.question}'. (Kiểm tra lại API Key để AI trả lời thực tế)."
-        log_event(payload.mode, cat_name, f"Hỏi: {payload.question} ➔ Đáp: {answer}", duration=5)
+    log_event(payload.mode, cat_name, f"Hỏi: {payload.question} ➔ Đáp: {answer}", duration=5)
     return {"answer": answer}
 
 # 2. API Ghi nhận đa dạng các loại cảnh báo từ Camera & AI Pose (Mục 3, 4)
