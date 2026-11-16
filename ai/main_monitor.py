@@ -17,16 +17,16 @@ from mediapipe.tasks.python import vision
 
 # Import linh hoạt theo package mới hoặc thư mục hiện tại
 try:
-    from ai.detectors.posture_math import calculate_shoulder_tilt, calculate_neck_tilt
+    from ai.detectors.posture_math import calculate_shoulder_tilt, calculate_neck_tilt, calculate_head_desk_proxy
     from ai.analyzers.posture_tracker import PostureDebounceTracker
     from ai.clients.backend_client import BackendEventPublisher
 except ImportError:
     try:
-        from detectors.posture_math import calculate_shoulder_tilt, calculate_neck_tilt
+        from detectors.posture_math import calculate_shoulder_tilt, calculate_neck_tilt, calculate_head_desk_proxy
         from analyzers.posture_tracker import PostureDebounceTracker
         from clients.backend_client import BackendEventPublisher
     except ImportError:
-        from posture_math import calculate_shoulder_tilt, calculate_neck_tilt
+        from posture_math import calculate_shoulder_tilt, calculate_neck_tilt, calculate_head_desk_proxy
         from posture_tracker import PostureDebounceTracker
         from backend_client import BackendEventPublisher
 
@@ -110,14 +110,18 @@ def run_posture_monitor():
 
             neck_angle = calculate_neck_tilt(chosen_ear, chosen_shoulder)
             shoulder_angle = calculate_shoulder_tilt(left_shoulder, right_shoulder)
+            too_close, drop_ratio = calculate_head_desk_proxy(nose, left_shoulder, right_shoulder, h, w)
 
-            # Đánh giá theo chuẩn: gập cổ > 25 độ, lệch vai > 10 độ
+            # Đánh giá theo chuẩn: gập cổ > 25 độ, lệch vai > 10 độ, cúi sát bàn < 25cm
             if neck_angle > 25.0:
                 is_bad = True
                 reasons.append(f"Gập cổ ({neck_angle:.1f}° > 25°)")
             if shoulder_angle > 10.0:
                 is_bad = True
                 reasons.append(f"Lệch vai ({shoulder_angle:.1f}° > 10°)")
+            if too_close:
+                is_bad = True
+                reasons.append("Cúi quá sát bàn (<25cm)")
 
             # Vẽ landmark trực quan trên frame
             cv2.line(frame, left_shoulder, right_shoulder, (255, 200, 0), 2)
