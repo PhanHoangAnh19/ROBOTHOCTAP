@@ -1,28 +1,64 @@
 # ai/ — Nhóm Training AI
 
-**Thành viên:** Phan Hà Minh Phúc · Nguyễn Văn Quốc
-**Nhánh:** `ai`
+**Thành viên:** Phan Hà Minh Phúc · **Nguyễn Văn Quốc**  
+**Nhánh Git:** `ai`
 
-## Nhiệm vụ chính (theo timeline 8 tuần)
-- MediaPipe Pose / FaceMesh: góc gập cổ, nghiêng vai, khoảng cách đầu–bàn
-- Phát hiện tư thế xấu kéo dài (mặc định 10 giây), EAR nhắm mắt, yaw/pitch quay đầu
-- Pipeline cắt trang sách/vở (deskew), phát hiện trang ổn định
-- **Privacy Gate**: chặn ảnh có mặt/da ≥ 98% trước khi gửi LLM
-- Viết & test Prompt cho bài tập tiểu học (giọng gợi mở, Socratic)
+---
 
-## Chạy
+## 🏗️ Cấu trúc thư mục module AI
+
 ```
-cd ai
-python -m venv .venv
-.venv\Scripts\python -m pip install opencv-python numpy requests
-.venv\Scripts\python test_cam_laptop.py
+ai/
+├── models/                     # Chứa các file trọng số mô hình nhẹ cho AI biên
+│   ├── pose_landmarker_lite.task   # Google Tasks Pose Model (khung xương tư thế)
+│   └── face_landmarker.task        # Google Tasks Face Mesh Model (mắt, miệng, đầu)
+│
+├── detectors/                  # Module trích xuất đặc trưng & thị giác máy tính
+│   ├── posture_math.py         # Tính góc gập cổ (Neck tilt) và nghiêng vai (Shoulder tilt)
+│   └── face_attention.py       # Tính EAR (nhắm mắt ngủ gật) và Yaw/Pitch (quay đầu)
+│
+├── analyzers/                  # Logic phân tích hành vi & lọc nhiễu thời gian
+│   └── posture_tracker.py      # State Machine: Debounce 10s + Cooldown 2 phút chuẩn Q2
+│
+├── clients/                    # Kết nối ngoại vi và truyền dữ liệu
+│   └── backend_client.py       # Bắn sự kiện JSON sang Backend FastAPI (POST /sensor-event)
+│
+├── prompts/                    # Kỹ nghệ Prompt cho trợ lý học tập AI
+│   └── llm_socratic.py         # Prompt Socratic hướng dẫn sư phạm tiểu học & 10 kịch bản test
+│
+├── main_monitor.py             # Ứng dụng chính: Camera HUD realtime giám sát tư thế (Mốc Demo M1)
+├── requirements.txt            # Danh sách thư viện cần thiết (mediapipe, opencv-python, requests)
+├── test_cam_laptop.py          # Script test camera baseline ban đầu
+└── test_opencv.py              # Script kiểm tra cài đặt OpenCV
 ```
-- Cần chạy **backend** trước (xem [be/README.md](../be/README.md)) để cảnh báo được gửi lên Dashboard.
-- Bấm vào cửa sổ camera rồi nhấn **Q** để tắt.
-- `requirements.txt` là môi trường đầy đủ của nhóm (có torch, khá nặng) — chỉ cài khi cần train/thử model.
 
-## File
-| File | Mô tả |
-|---|---|
-| `test_cam_laptop.py` | Thử phát hiện tư thế bằng webcam laptop (so khác biệt khung hình), gửi cảnh báo tới `POST /sensor-event` |
-| `test_opencv.py` | Kiểm tra OpenCV cài đặt đúng |
+---
+
+## 🚀 Hướng dẫn chạy thử nghiệm
+
+### 1. Kích hoạt môi trường ảo
+```bash
+source venv/bin/activate
+# Hoặc cài đặt thư viện cần thiết:
+pip install mediapipe opencv-python numpy requests
+```
+
+### 2. Chạy ứng dụng Giám sát tư thế (Demo M1)
+```bash
+# Chạy từ thư mục gốc:
+python3 ai/main_monitor.py
+
+# Hoặc vào thư mục ai:
+cd ai && python3 main_monitor.py
+```
+- **Chỉ số trên màn hình:**
+  - `FPS`: Tốc độ xử lý khung hình (đã áp dụng bộ lọc mượt mà EMA).
+  - `Neck Tilt`: Góc cúi đầu ($> 25^\circ \rightarrow$ cảnh báo gập cổ).
+  - `Shoulder Tilt`: Độ lệch trục vai ($> 10^\circ \rightarrow$ cảnh báo vẹo cột sống).
+  - `State`: Đếm thời gian ngồi sai liên tục đủ 10 giây sẽ kích hoạt cảnh báo đỏ `CANH BAO: NGOI THANG LUNG!` và bắn sự kiện sang Dashboard.
+- Nhấn phím **`q`** để dừng camera.
+
+### 3. Chạy thử nghiệm Prompt Socratic cho bài học
+```bash
+python3 ai/prompts/llm_socratic.py
+```
