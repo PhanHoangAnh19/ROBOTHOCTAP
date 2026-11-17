@@ -1,3 +1,13 @@
-fastapi
-uvicorn
-pydantic
+# Tầng phụ thuộc: FastAPI, PostgreSQL và công cụ xác thực/kiểm thử backend.
+fastapi>=0.121,<1
+uvicorn>=0.30,<1
+pydantic>=2.7,<3
+pydantic-settings>=2.2,<3
+psycopg[binary]>=3.2,<4
+psycopg-pool>=3.2,<4
+python-dotenv>=1,<2
+cryptography>=43
+PyJWT>=2.9,<3
+tzdata
+httpx>=0.27,<1
+pytest>=8,<10

@@ -1,0 +1,20 @@
+# Tầng hạ tầng: PostgreSQL 16 local với volume riêng và kiểm tra sẵn sàng.
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: robothoctap
+      POSTGRES_USER: robot
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Cau hinh POSTGRES_PASSWORD trong .env}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - robothoctap_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U robot -d robothoctap"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+volumes:
+  robothoctap_pgdata:
