@@ -1,0 +1,17 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", "Segoe UI", system-ui, sans-serif;
+  --color-brand-50: #f3f1ff;
+  --color-brand-100: #e9e5ff;
+  --color-brand-200: #d4ccff;
+  --color-brand-500: #7c5cff;
+  --color-brand-600: #6a45f5;
+  --color-brand-700: #5a35dd;
+  --color-sidebar: #0f1729;
+  --color-sidebar-hover: #1c2640;
+}
+
+body {
+  @apply bg-slate-50 text-slate-900 antialiased;
+}
