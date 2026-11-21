@@ -39,3 +39,8 @@ videos/
 # Database (dữ liệu test local)
 *.db
 *.sqlite3
+
+# Bảng khảo sát số liệu (dữ liệu nội bộ, không lên git)
+*.xlsx
+*.xls
+~$*
