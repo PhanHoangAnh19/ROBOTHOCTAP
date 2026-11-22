@@ -9,9 +9,11 @@ __pycache__/
 .env.*
 !.env.example
 
-# IDE
+# IDE & API Tools
 .vscode/
 .idea/
+.postman/
+postman/
 
 # Logs and temporary files
 *.log
