@@ -54,7 +54,7 @@ def run_page_deskew_demo():
         # Kiểm tra tính ổn định của trang
         status = stability_detector.check_stability(corners, warped)
 
-        # 1. Vẽ khung phát hiện trang vở
+        # 1. Vẽ khung phát hiện trang vở hoặc khung hướng dẫn
         if corners is not None:
             corners_int = np.int32(corners)
             border_color = (0, 255, 0) if status["is_stable"] else (0, 165, 255)
@@ -64,6 +64,11 @@ def run_page_deskew_demo():
             for i, pt in enumerate(corners_int):
                 cv2.circle(frame, tuple(pt), 6, (0, 0, 255), -1)
                 cv2.putText(frame, str(i + 1), (pt[0] - 10, pt[1] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+        else:
+            # Khung gợi ý vị trí đặt sách
+            cv2.rectangle(frame, (int(w * 0.15), int(h * 0.22)), (int(w * 0.85), int(h * 0.88)), (200, 200, 0), 1)
+            cv2.putText(frame, "Huong dan: De ca 4 goc sach/vo lot vao khung camera (Lui xa ~40cm)", 
+                        (20, h - 25), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)
 
         # 2. Hiển thị HUD thông tin
         cv2.rectangle(frame, (10, 10), (450, 110), (0, 0, 0), -1)

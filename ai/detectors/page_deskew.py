@@ -60,47 +60,60 @@ def detect_page_contour(image):
     """
     Phát hiện trang sách/vở trong khung hình và trích xuất 4 góc:
     1. Grayscale + GaussianBlur khử nhiễu
-    2. Canny Edge Detection + Dilate kết nối các nét đứt
-    3. Tìm Contours và lọc diện tích lớn nhất (chiếm > 12% khung hình)
-    4. approxPolyDP xấp xỉ đa giác 4 đỉnh
+    2. Canny đa ngưỡng + Morphological Closing & Otsu threshold
+    3. Tìm Contours và lọc diện tích lớn nhất (chiếm > 6% khung hình)
+    4. approxPolyDP xấp xỉ đa giác 4 đỉnh (với fallback minAreaRect an toàn)
     """
     h, w = image.shape[:2]
-    min_area = (h * w) * 0.12  # Cuốn vở phải chiếm ít nhất 12% màn hình
+    min_area = (h * w) * 0.06  # Ngưỡng diện tích linh hoạt để bắt nhạy khi đặt xa
 
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     blurred = cv2.GaussianBlur(gray, (5, 5), 0)
 
-    # Dùng Canny để tìm các cạnh rõ ràng của trang giấy
-    edged = cv2.Canny(blurred, 40, 150)
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-    dilated = cv2.dilate(edged, kernel, iterations=2)
+    candidate_contours = []
 
-    contours, _ = cv2.findContours(dilated.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    if not contours:
+    # Chiến lược 1: Canny đa ngưỡng kết hợp nối liền viền
+    for low, high in [(30, 90), (50, 150)]:
+        edged = cv2.Canny(blurred, low, high)
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+        dilated = cv2.dilate(edged, kernel, iterations=2)
+        cnts, _ = cv2.findContours(dilated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        for c in cnts:
+            if cv2.contourArea(c) >= min_area:
+                candidate_contours.append(c)
+
+    # Chiến lược 2: Otsu thresholding cho giấy trắng trên nền bàn/áo tương phản
+    _, otsu = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    kernel_o = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 7))
+    closed_o = cv2.morphologyEx(otsu, cv2.MORPH_CLOSE, kernel_o, iterations=2)
+    cnts_o, _ = cv2.findContours(closed_o, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    for c in cnts_o:
+        area = cv2.contourArea(c)
+        if min_area <= area < (h * w * 0.95):
+            candidate_contours.append(c)
+
+    if not candidate_contours:
         return None, None
 
-    # Lấy các contour lớn nhất
-    contours = sorted(contours, key=cv2.contourArea, reverse=True)[:5]
+    # Lọc lấy các contour lớn nhất
+    candidate_contours = sorted(candidate_contours, key=cv2.contourArea, reverse=True)[:8]
+
     page_corners = None
-
-    for c in contours:
-        area = cv2.contourArea(c)
-        if area < min_area:
-            continue
-
+    for c in candidate_contours:
         peri = cv2.arcLength(c, True)
-        approx = cv2.approxPolyDP(c, 0.03 * peri, True)
-
-        # Nếu xấp xỉ được chính xác 4 đỉnh
-        if len(approx) == 4:
-            page_corners = approx.reshape(4, 2)
+        for eps in [0.02, 0.03, 0.04, 0.05]:
+            approx = cv2.approxPolyDP(c, eps * peri, True)
+            if len(approx) == 4 and cv2.isContourConvex(approx):
+                page_corners = approx.reshape(4, 2)
+                break
+        if page_corners is not None:
             break
 
-    # Nếu không tìm thấy tứ giác hoàn hảo, dùng minAreaRect làm phương án dự phòng (fallback)
-    if page_corners is None and len(contours) > 0 and cv2.contourArea(contours[0]) >= min_area:
-        rect = cv2.minAreaRect(contours[0])
+    # Fallback nếu mép hơi cong hoặc bị tay đè: Dùng minAreaRect
+    if page_corners is None and len(candidate_contours) > 0:
+        rect = cv2.minAreaRect(candidate_contours[0])
         box = cv2.boxPoints(rect)
-        page_corners = np.int0(box)
+        page_corners = np.asarray(box, dtype=np.float32)
 
     if page_corners is not None:
         warped, size = four_point_transform(image, page_corners)
