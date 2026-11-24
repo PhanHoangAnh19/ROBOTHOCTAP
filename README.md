@@ -8,7 +8,7 @@ Team 7 thành viên, chia 3 nhóm, phát triển trong 8 tuần (26/10 – 20/12
 ROBOTHOCTAP/
 ├── be/            # Nhóm BE — FastAPI + SQLite, API sự kiện, LLM client
 ├── ai/            # Nhóm Training AI — camera, tư thế, tập trung, prompt
-└── web-service/   # Nhóm Web & Service — Dashboard phụ huynh
+└── web-service/   # Nhóm Web & Service — Dashboard giáo viên/phụ huynh (Vue 3)
 ```
 
 | Thư mục | Nhóm | Thành viên | Nhánh làm việc |
@@ -55,5 +55,5 @@ master  ← nhánh chính, chỉ nhận code qua Pull Request
 | Bước | Lệnh | Xem chi tiết |
 |---|---|---|
 | 1. Backend | `cd be` → `python -m uvicorn backend_api:app --port 8000` | [be/README.md](be/README.md) |
-| 2. Dashboard | Mở `web-service/dashboard.html` bằng Chrome/Edge | [web-service/README.md](web-service/README.md) |
+| 2. Dashboard | `cd web-service` → `npm install` (lần đầu) → `npm run dev`, mở http://localhost:5173 | [web-service/README.md](web-service/README.md) |
 | 3. Camera tư thế | `cd ai` → `python test_cam_laptop.py` | [ai/README.md](ai/README.md) |
