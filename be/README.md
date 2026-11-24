@@ -83,6 +83,7 @@ Mỗi sự kiện chỉ có `id`, `timestamp` (`YYYY-MM-DD HH:MM:SS`), `event_ty
 | POST | `/providers/{id}/test` | Bearer access JWT |
 | POST | `/sensor-event`, `/ask-ai` | Bearer token robot |
 | GET | `/events`, `/stats` | Bearer access JWT |
+| GET, PUT | `/settings` | Bearer access JWT |
 
 Các API danh sách quản trị nhận `limit` (1–100, mặc định 50) và `offset` (≥0).
 PUT thay toàn bộ dữ liệu nhập. Schema đầy đủ có trong `/docs`.
@@ -104,6 +105,26 @@ thu hồi hoặc vô hiệu hóa robot khiến token không sử dụng được
 Khóa provider được mã hóa Fernet trước khi INSERT/UPDATE; không trả khóa trong API.
 Giữ nguyên khóa mã hóa nếu cần đọc các provider đã lưu.
 Chỉ một provider được active tại một thời điểm; tắt provider cũ trước khi bật provider khác.
+
+## API cấu hình (settings)
+
+| Method | URL | Xác thực |
+|---|---|---|
+| GET | `/api/v1/settings` | Bearer access JWT |
+| PUT | `/api/v1/settings` | Bearer access JWT |
+
+GET trả toàn bộ cấu hình dạng `{key: value}`.
+PUT nhận JSON object `{key: value}`, cập nhật bằng upsert, trả lại toàn bộ cấu hình.
+
+Ba khóa mặc định (seed tự động khi khởi động):
+
+| Khóa | Giá trị mặc định | Ý nghĩa |
+|---|---|---|
+| `posture_bad_threshold_seconds` | 10 | Ngưỡng phát hiện tư thế xấu (giây) |
+| `reminder_cooldown_seconds` | 120 | Thời gian chờ giữa hai lần nhắc (giây) |
+| `debounce_seconds` | 2 | Thời gian chống rung (giây) |
+
+Giá trị phải là số nguyên dương. Khóa ngoài danh sách trả 422.
 
 ## LLM
 

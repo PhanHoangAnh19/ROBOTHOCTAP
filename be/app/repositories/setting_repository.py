@@ -2,6 +2,11 @@
 from psycopg.types.json import Jsonb
 
 
+def get_all(connection):
+    rows = connection.execute("SELECT setting_key, setting_value FROM app_settings ORDER BY setting_key").fetchall()
+    return {row["setting_key"]: row["setting_value"] for row in rows}
+
+
 def get(connection, key):
     return connection.execute("SELECT setting_value AS value FROM app_settings WHERE setting_key = %s", (key,)).fetchone()
 
