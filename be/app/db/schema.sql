@@ -51,3 +51,6 @@ CREATE TABLE IF NOT EXISTS app_settings (
     setting_key TEXT NOT NULL CONSTRAINT idx_app_settings_setting_key UNIQUE,
     setting_value JSONB NOT NULL
 );
+INSERT INTO app_settings (setting_key, setting_value) VALUES ('posture_bad_threshold_seconds', '10'::jsonb) ON CONFLICT (setting_key) DO NOTHING;
+INSERT INTO app_settings (setting_key, setting_value) VALUES ('reminder_cooldown_seconds', '120'::jsonb) ON CONFLICT (setting_key) DO NOTHING;
+INSERT INTO app_settings (setting_key, setting_value) VALUES ('debounce_seconds', '2'::jsonb) ON CONFLICT (setting_key) DO NOTHING;
