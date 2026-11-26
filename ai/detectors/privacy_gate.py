@@ -44,15 +44,16 @@ class PrivacyGateDetector:
         model_path: str = None,
         max_skin_ratio: float = 0.15,
         max_cluster_ratio: float = 0.08,
-        min_blur_score: float = 60.0
+        min_blur_score: float = 60.0,
+        shared_face_detector=None
     ):
         self.max_skin_ratio = max_skin_ratio
         self.max_cluster_ratio = max_cluster_ratio
         self.min_blur_score = min_blur_score
 
-        # 1. Tìm file model MediaPipe Face Landmarker
-        self.face_detector = None
-        if MEDIAPIPE_AVAILABLE:
+        # 1. Tái sử dụng hoặc khởi tạo MediaPipe Face Landmarker
+        self.face_detector = shared_face_detector
+        if self.face_detector is None and MEDIAPIPE_AVAILABLE:
             model_candidates = [
                 model_path,
                 os.path.join(AI_DIR, "models", "face_landmarker.task"),
@@ -374,54 +375,74 @@ class PrivacyGateDetector:
     def draw_hud(self, display_frame: np.ndarray, result: dict, show_skin_mask: bool = False) -> np.ndarray:
         """
         Vẽ giao diện giám sát an toàn Cyber Quantum HUD trên khung hình.
+        Ưu tiên hiển thị trực tiếp ảnh đã làm mờ mặt (sanitized_image) để thấy rõ hiệu ứng xóa mặt.
         """
-        output = display_frame.copy()
+        sanitized = result.get("sanitized_image")
+        if sanitized is not None and sanitized.shape[:2] == display_frame.shape[:2]:
+            output = sanitized.copy()
+        else:
+            output = display_frame.copy()
+
         h, w = output.shape[:2]
 
         is_safe = result.get("is_safe", False)
-        status = result.get("status", "UNKNOWN")
         status_code = result.get("status_code", "UNKNOWN")
-        reason = result.get("reason", "")
+        faces_cnt = result.get("faces_count", 0)
+        skin_rat = result.get("skin_ratio", 0.0)
+        blur_sc = result.get("blur_score", 0.0)
 
-        # Định màu sắc trạng thái
+        # Định màu sắc & nội dung ngắn gọn không dấu/chuẩn ASCII để không tràn khung OpenCV
         if status_code == "PASSED_AUTO_ANONYMIZED":
-            theme_color = (255, 200, 0)     # Xanh ngọc / Vàng: ĐÃ TỰ ĐỘNG XÓA MẶT
-            status_text = "[PASSED - TỰ ĐỘNG LÀM MỜ MẶT] BẢO VỆ DANH TÍNH 100%"
+            theme_color = (255, 210, 0)     # Xanh ngọc: ĐÃ TỰ ĐỘNG XÓA MẶT
+            status_text = "[PASSED - AUTO BLUR] DA TU DONG LAM MO MAT 100%"
+            detail_text = f"Da xoa nhan dien {faces_cnt} khuon mat -> An toan gui LLM"
         elif is_safe:
             theme_color = (0, 255, 0)       # Xanh lá: AN TOÀN
-            status_text = "[PASSED] CỔNG AN TOÀN — ĐỦ ĐIỀU KIỆN GỬI LLM"
+            status_text = "[PASSED] CONG AN TOAN - DU DIEU KIEN GUI LLM"
+            detail_text = "Trang vo sach, 0 khuon mat, khong bi tay che"
         elif status_code in ["FACE_DETECTED", "HOMEWORK_TEXT_COVERED"]:
             theme_color = (0, 0, 255)       # Đỏ: VI PHẠM
-            status_text = "[BLOCKED] VI PHẠM: MẶT CHE MẤT ĐỀ BÀI TẬP"
+            status_text = "[BLOCKED] VI PHAM: PHAT HIEN MAT / CHE DE BAI"
+            detail_text = f"Phat hien {faces_cnt} mat che bai -> Chan gui Cloud (Q9)"
         else:
             theme_color = (0, 165, 255)     # Cam: CHE KHUẤT DA TAY
-            status_text = "[BLOCKED] VI PHẠM: BÀN TAY CHE TRANG VỞ"
+            status_text = "[BLOCKED] VI PHAM: BAN TAY CHE TRANG VO (>15%)"
+            detail_text = f"Ty le da tay {skin_rat*100:.1f}% vuot nguong an toan"
+
+        # Tự động co giãn cỡ chữ theo chiều rộng cửa sổ để không bao giờ tràn lề phải
+        title_scale = min(0.55, max(0.35, w / 820.0))
+        sub_scale = min(0.45, max(0.32, w / 920.0))
+        box_h = 96
 
         # 1. Vẽ khung viền trạng thái toàn cảnh
         cv2.rectangle(output, (0, 0), (w - 1, h - 1), theme_color, 3)
 
-        # 2. Vẽ hộp thông tin Telemetry
-        cv2.rectangle(output, (10, 10), (w - 10, 115), (20, 20, 20), -1)
-        cv2.rectangle(output, (10, 10), (w - 10, 115), theme_color, 2)
-
-        cv2.putText(output, status_text, (25, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.65, theme_color, 2)
-        cv2.putText(output, f"Chi tiet: {reason}", (25, 68), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (220, 220, 220), 1)
-
-        # Thông số kỹ thuật
-        faces_cnt = result.get("faces_count", 0)
-        skin_rat = result.get("skin_ratio", 0.0)
-        blur_sc = result.get("blur_score", 0.0)
-        telemetry = f"Khuon mat: {faces_cnt} | Ty le da: {skin_rat*100:.1f}% (Nguong: <=15%) | Do net: {blur_sc:.0f}"
-        cv2.putText(output, telemetry, (25, 95), cv2.FONT_HERSHEY_SIMPLEX, 0.46, (180, 255, 180) if is_safe else (180, 180, 255), 1)
-
-        # 3. Đánh dấu vị trí khuôn mặt nếu có
+        # 2. Đánh dấu vị trí khuôn mặt (vẽ trước hộp HUD để không đè chữ lên hộp HUD)
         for (fx, fy, fw, fh) in result.get("face_boxes", []):
-            cv2.rectangle(output, (fx, fy), (fx + fw, fy + fh), (0, 0, 255), 2)
-            cv2.putText(output, "CANH BAO MAT", (fx, max(20, fy - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
+            box_col = (255, 210, 0) if status_code == "PASSED_AUTO_ANONYMIZED" else (0, 0, 255)
+            lbl = "DA LAM MO MAT (AN TOAN)" if status_code == "PASSED_AUTO_ANONYMIZED" else "CANH BAO MAT"
+            cv2.rectangle(output, (fx, fy), (fx + fw, fy + fh), box_col, 2)
+            # Nếu cạnh trên của mặt nằm sát hộp HUD (< 115px), đặt nhãn xuống dưới khung mặt
+            lbl_y = (fy + fh + 18) if fy < (box_h + 25) else (fy - 8)
+            cv2.putText(output, lbl, (fx, min(h - 10, max(20, lbl_y))),
+                        cv2.FONT_HERSHEY_SIMPLEX, sub_scale, box_col, 2)
 
-        # 4. Đánh dấu cụm da tay nếu có
+        # 3. Đánh dấu cụm da tay nếu có
         for (cx, cy, cw, ch, cratio) in result.get("skin_clusters", []):
             cv2.rectangle(output, (cx, cy), (cx + cw, cy + ch), (0, 165, 255), 1)
-            cv2.putText(output, f"Tay {cratio*100:.1f}%", (cx, max(15, cy - 5)), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 165, 255), 1)
+            lbl_y = (cy + ch + 15) if cy < (box_h + 20) else (cy - 5)
+            cv2.putText(output, f"Da/Tay {cratio*100:.1f}%", (cx, min(h - 10, max(15, lbl_y))),
+                        cv2.FONT_HERSHEY_SIMPLEX, sub_scale * 0.9, (0, 165, 255), 1)
+
+        # 4. Vẽ hộp thông tin Telemetry (luôn nằm trên cùng, sạch đẹp)
+        cv2.rectangle(output, (8, 8), (w - 8, box_h), (18, 18, 18), -1)
+        cv2.rectangle(output, (8, 8), (w - 8, box_h), theme_color, 2)
+
+        cv2.putText(output, status_text, (18, 34), cv2.FONT_HERSHEY_SIMPLEX, title_scale, theme_color, 2)
+        cv2.putText(output, f"Chi tiet: {detail_text}", (18, 60), cv2.FONT_HERSHEY_SIMPLEX, sub_scale, (230, 230, 230), 1)
+
+        telemetry = f"Mat: {faces_cnt} | Da tay: {skin_rat*100:.1f}% (<=15%) | Do net: {blur_sc:.0f}"
+        cv2.putText(output, telemetry, (18, 84), cv2.FONT_HERSHEY_SIMPLEX, sub_scale,
+                    (180, 255, 180) if is_safe else (180, 180, 255), 1)
 
         return output
