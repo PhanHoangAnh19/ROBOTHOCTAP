@@ -42,77 +42,134 @@ class PrivacyGateDetector:
     def __init__(
         self,
         model_path: str = None,
-        max_skin_ratio: float = 0.15,
-        max_cluster_ratio: float = 0.08,
+        max_skin_ratio: float = 0.08,
+        max_cluster_ratio: float = 0.05,
         min_blur_score: float = 60.0,
-        shared_face_detector=None
+        shared_face_detector=None,
+        shared_pose_detector=None
     ):
         self.max_skin_ratio = max_skin_ratio
         self.max_cluster_ratio = max_cluster_ratio
         self.min_blur_score = min_blur_score
 
-        # 1. Tái sử dụng hoặc khởi tạo MediaPipe Face Landmarker
+        # 1. Tái sử dụng hoặc khởi tạo MediaPipe Face Landmarker & Pose Landmarker
         self.face_detector = shared_face_detector
-        if self.face_detector is None and MEDIAPIPE_AVAILABLE:
-            model_candidates = [
-                model_path,
-                os.path.join(AI_DIR, "models", "face_landmarker.task"),
-                os.path.join(AI_DIR, "face_landmarker.task"),
-                os.path.join(PROJECT_ROOT, "face_landmarker.task"),
-                os.path.join(PROJECT_ROOT, "ai", "models", "face_landmarker.task")
-            ]
-            valid_model = next((p for p in model_candidates if p and os.path.exists(p)), None)
+        self.pose_detector = shared_pose_detector
 
-            if valid_model:
-                try:
-                    base_options = python.BaseOptions(model_asset_path=valid_model)
-                    options = vision.FaceLandmarkerOptions(
-                        base_options=base_options,
-                        running_mode=vision.RunningMode.IMAGE,
-                        num_faces=4,
-                        min_face_detection_confidence=0.35,
-                        min_face_presence_confidence=0.35
-                    )
-                    self.face_detector = vision.FaceLandmarker.create_from_options(options)
-                except Exception as e:
-                    print(f"⚠️ [PrivacyGate] Không thể nạp FaceLandmarker: {e}")
-            else:
-                print("⚠️ [PrivacyGate] Không tìm thấy file model face_landmarker.task, chạy chế độ lọc da HSV.")
+        if MEDIAPIPE_AVAILABLE:
+            if self.face_detector is None:
+                model_candidates = [
+                    model_path,
+                    os.path.join(AI_DIR, "models", "face_landmarker.task"),
+                    os.path.join(AI_DIR, "face_landmarker.task"),
+                    os.path.join(PROJECT_ROOT, "face_landmarker.task"),
+                    os.path.join(PROJECT_ROOT, "ai", "models", "face_landmarker.task")
+                ]
+                valid_model = next((p for p in model_candidates if p and os.path.exists(p)), None)
+                if valid_model:
+                    try:
+                        base_options = python.BaseOptions(model_asset_path=valid_model)
+                        options = vision.FaceLandmarkerOptions(
+                            base_options=base_options,
+                            running_mode=vision.RunningMode.IMAGE,
+                            num_faces=4,
+                            min_face_detection_confidence=0.30,
+                            min_face_presence_confidence=0.30
+                        )
+                        self.face_detector = vision.FaceLandmarker.create_from_options(options)
+                    except Exception as e:
+                        print(f"⚠️ [PrivacyGate] Không thể nạp FaceLandmarker: {e}")
+
+            if self.pose_detector is None:
+                pose_candidates = [
+                    os.path.join(AI_DIR, "models", "pose_landmarker_lite.task"),
+                    os.path.join(AI_DIR, "pose_landmarker_lite.task"),
+                    os.path.join(PROJECT_ROOT, "pose_landmarker_lite.task"),
+                    os.path.join(PROJECT_ROOT, "ai", "models", "pose_landmarker_lite.task")
+                ]
+                valid_pose = next((p for p in pose_candidates if p and os.path.exists(p)), None)
+                if valid_pose:
+                    try:
+                        pose_opts = vision.PoseLandmarkerOptions(
+                            base_options=python.BaseOptions(model_asset_path=valid_pose),
+                            running_mode=vision.RunningMode.IMAGE,
+                            num_poses=2,
+                            min_pose_detection_confidence=0.35,
+                            min_pose_presence_confidence=0.35
+                        )
+                        self.pose_detector = vision.PoseLandmarker.create_from_options(pose_opts)
+                    except Exception:
+                        pass
 
     def detect_faces(self, image: np.ndarray) -> tuple[int, list]:
         """
-        Phát hiện số lượng khuôn mặt và tọa độ bounding boxes trong ảnh.
+        Phát hiện khuôn mặt chính diện (FaceLandmarker) kết hợp phát hiện đầu/người nghiêng hoặc cúi
+        phía sau (PoseLandmarker) để đạt độ chính xác Q9 >= 98%.
         """
-        if not MEDIAPIPE_AVAILABLE or self.face_detector is None or image is None:
+        if not MEDIAPIPE_AVAILABLE or image is None or image.size == 0:
             return 0, []
 
         h, w = image.shape[:2]
-        rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        scale = 640.0 / max(h, w) if max(h, w) > 640 else 1.0
+        small = cv2.resize(image, (int(w * scale), int(h * scale))) if scale < 1.0 else image
+        rgb_image = cv2.cvtColor(small, cv2.COLOR_BGR2RGB)
         mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_image)
 
-        try:
-            results = self.face_detector.detect(mp_image)
-            faces_count = len(results.face_landmarks)
-            face_boxes = []
+        face_boxes = []
 
-            for landmarks in results.face_landmarks:
-                xs = [lm.x * w for lm in landmarks]
-                ys = [lm.y * h for lm in landmarks]
-                x_min = max(0, int(min(xs)))
-                y_min = max(0, int(min(ys)))
-                x_max = min(w, int(max(xs)))
-                y_max = min(h, int(max(ys)))
-                face_boxes.append((x_min, y_min, x_max - x_min, y_max - y_min))
+        # 1. Quét khuôn mặt qua FaceLandmarker
+        if self.face_detector is not None:
+            try:
+                results = self.face_detector.detect(mp_image)
+                for landmarks in results.face_landmarks:
+                    xs = [lm.x * w for lm in landmarks]
+                    ys = [lm.y * h for lm in landmarks]
+                    x_min = max(0, int(min(xs)))
+                    y_min = max(0, int(min(ys)))
+                    x_max = min(w, int(max(xs)))
+                    y_max = min(h, int(max(ys)))
+                    face_boxes.append((x_min, y_min, x_max - x_min, y_max - y_min))
+            except Exception:
+                pass
 
-            return faces_count, face_boxes
-        except Exception:
-            return 0, []
+        # 2. Quét đầu/cơ thể người (nghiêng mặt, cúi đầu, người lớn đi phía sau) qua PoseLandmarker
+        if len(face_boxes) == 0 and self.pose_detector is not None:
+            try:
+                p_res = self.pose_detector.detect(mp_image)
+                if p_res.pose_landmarks:
+                    for lms in p_res.pose_landmarks:
+                        vis_pts = [
+                            (lm.x * w, lm.y * h)
+                            for idx, lm in enumerate(lms[:17])
+                            if lm.visibility > 0.45 and 0.02 <= lm.x <= 0.98 and 0.02 <= lm.y <= 0.98
+                        ]
+                        if len(vis_pts) >= 2:
+                            # Ưu tiên lấy hộp bao quanh vùng đầu (mốc 0..10) nếu có
+                            head_pts = [
+                                (lm.x * w, lm.y * h)
+                                for lm in lms[:11]
+                                if lm.visibility > 0.35 and 0.0 <= lm.x <= 1.0 and 0.0 <= lm.y <= 1.0
+                            ]
+                            pts_use = head_pts if len(head_pts) >= 2 else vis_pts
+                            xs = [p[0] for p in pts_use]
+                            ys = [p[1] for p in pts_use]
+                            pad = int(max(w, h) * 0.06)
+                            x_min = max(0, int(min(xs)) - pad)
+                            y_min = max(0, int(min(ys)) - pad)
+                            x_max = min(w, int(max(xs)) + pad)
+                            y_max = min(h, int(max(ys)) + pad)
+                            if (x_max - x_min) > 20 and (y_max - y_min) > 20:
+                                face_boxes.append((x_min, y_min, x_max - x_min, y_max - y_min))
+            except Exception:
+                pass
+
+        return len(face_boxes), face_boxes
 
     def compute_skin_segmentation(self, image: np.ndarray) -> tuple[float, float, np.ndarray, list]:
         """
         Phân đoạn da người kết hợp 2 không gian màu:
-          - HSV: Hue [0, 25], Saturation [30, 255], Value [60, 255]
-          - YCrCb: Cr [133, 173], Cb [77, 127]
+          - HSV: Hue [0, 23], Saturation [42, 255], Value [55, 255] (loại bỏ giấy trắng ngả vàng dưới đèn)
+          - YCrCb: Cr [138, 175], Cb [77, 127]
         Khử nhiễu cấu trúc hình elip để loại bỏ vân giấy/đường kẻ ô ly.
         """
         if image is None or image.size == 0:
@@ -121,13 +178,13 @@ class PrivacyGateDetector:
         h, w = image.shape[:2]
         total_pixels = h * w
 
-        # 1. Mặt nạ HSV
+        # 1. Mặt nạ HSV (S >= 42 loại bỏ hoàn toàn bóng râm trên giấy trắng)
         hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-        mask_hsv = cv2.inRange(hsv, np.array([0, 28, 60], dtype=np.uint8), np.array([25, 255, 255], dtype=np.uint8))
+        mask_hsv = cv2.inRange(hsv, np.array([0, 42, 55], dtype=np.uint8), np.array([23, 255, 255], dtype=np.uint8))
 
-        # 2. Mặt nạ YCrCb
+        # 2. Mặt nạ YCrCb (Cr >= 138 chuẩn sắc tố da người)
         ycrcb = cv2.cvtColor(image, cv2.COLOR_BGR2YCrCb)
-        mask_ycrcb = cv2.inRange(ycrcb, np.array([0, 133, 77], dtype=np.uint8), np.array([255, 173, 127], dtype=np.uint8))
+        mask_ycrcb = cv2.inRange(ycrcb, np.array([0, 138, 77], dtype=np.uint8), np.array([255, 175, 127], dtype=np.uint8))
 
         # 3. Giao hai mặt nạ (Logical AND)
         combined = cv2.bitwise_and(mask_hsv, mask_ycrcb)

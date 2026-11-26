@@ -43,7 +43,7 @@ def run_privacy_gate_demo(file_path: str = None):
     os.makedirs(passed_dir, exist_ok=True)
     os.makedirs(blocked_dir, exist_ok=True)
 
-    detector = PrivacyGateDetector(max_skin_ratio=0.15, max_cluster_ratio=0.08)
+    detector = PrivacyGateDetector(max_skin_ratio=0.08, max_cluster_ratio=0.05)
 
     # Chế độ 1: Kiểm thử trên file ảnh đơn lẻ
     if file_path:
@@ -174,7 +174,7 @@ def run_q9_benchmark():
         ("group3_adult_background", "Nhóm 3: Người lớn đi phía sau",   True),
         ("group4_clean_page",       "Nhóm 4: Trang sách sạch đạt chuẩn", False),
     ]
-    detector = PrivacyGateDetector(max_skin_ratio=0.15, max_cluster_ratio=0.08)
+    detector = PrivacyGateDetector(max_skin_ratio=0.08, max_cluster_ratio=0.05)
 
     print("=" * 72)
     print("📊 BENCHMARK CHỈ SỐ Q9 — CỔNG RIÊNG TƯ ĐA TẦNG (QUỐC & PHÚC)")

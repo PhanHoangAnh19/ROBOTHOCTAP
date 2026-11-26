@@ -295,11 +295,12 @@ def run_monitor(enable_pose: bool, enable_attention: bool, enable_gate: bool = T
     print(f"🚀 ROBOT HỌC TẬP — MONITOR TỔNG HỢP v3.1 (MỐC M2) [{' + '.join(mode_label)}]")
     print("=" * 68)
 
-    # Khởi tạo model cần thiết (Chia sẻ chung face_detector để không tốn gấp đôi RAM/CPU)
-    pose_detector = _load_pose_detector() if enable_pose else None
+    # Khởi tạo model cần thiết (Chia sẻ chung face_detector & pose_detector để không tốn gấp đôi RAM/CPU)
+    pose_detector = _load_pose_detector() if (enable_pose or enable_gate) else None
     face_detector = _load_face_detector() if (enable_attention or enable_gate) else None
     privacy_gate  = PrivacyGateDetector(
-        max_skin_ratio=0.15, max_cluster_ratio=0.08, shared_face_detector=face_detector
+        max_skin_ratio=0.08, max_cluster_ratio=0.05,
+        shared_face_detector=face_detector, shared_pose_detector=pose_detector
     ) if enable_gate else None
     stability_det = PageStabilityDetector(required_duration=1.0, movement_threshold=18.0, max_hand_coverage=0.15) if enable_gate else None
 
