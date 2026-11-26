@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { BookOpen, ClipboardList, LayoutDashboard, Menu, Users, X } from 'lucide-vue-next'
+import { BookOpen, Bot, ClipboardList, LayoutDashboard, Menu, Users, X } from 'lucide-vue-next'
 import { STUDENTS, needsAttention } from '@/data/mock'
 import { ui } from '@/stores/ui'
 import { useRobotEvents } from '@/stores/robot'
@@ -18,6 +18,7 @@ const nav = computed(() => [
   { to: '/hoc-sinh', label: 'Học sinh', icon: Users, badge: attentionCount.value },
   { to: '/bai-hoc', label: 'Nội dung bài học', icon: BookOpen },
   { to: '/bai-tap', label: 'Bài tập', icon: ClipboardList, badge: pendingHomework.value },
+  { to: '/ai-chi-phi', label: 'AI & Chi phí', icon: Bot },
 ])
 
 function isActive(to: string) {
