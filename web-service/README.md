@@ -37,6 +37,7 @@ Không chạy backend vẫn xem được giao diện — web tự chuyển sang 
 | `/hoc-sinh/:id` | Chi tiết học sinh | Thống kê **theo ngày / theo tuần**, danh sách **phiên học**, **timeline sự kiện** từng phiên |
 | `/bai-hoc` | Nội dung bài học | Danh sách bài đã nạp |
 | `/bai-tap` | Bài tập | Tình trạng làm bài |
+| `/ai-chi-phi` | AI & Chi phí (tuần 5) | **Phản hồi LLM** (lọc theo chế độ / trạng thái offline, tìm kiếm), **biểu đồ token & chi phí** theo ngày, **độ trễ trung vị so với Q8 ≤ 8s**, đơn giá chỉnh được, lịch sử bài học |
 
 Nút **Nạp bài học** mở hộp thoại gửi bài (môn, tóm tắt, ý chính, câu hỏi ôn) cho cả lớp.
 
@@ -48,8 +49,41 @@ Nút **Nạp bài học** mở hộp thoại gửi bài (môn, tóm tắt, ý ch
 | Thống kê ngày / tuần, phiên học | Web tự tính từ sự kiện (phiên mới khi 2 sự kiện cách nhau > 30 phút) | API thống kê & phiên học (backend hiện chỉ trả 50 sự kiện gần nhất) |
 | Học sinh, lớp, nhóm, tâm trạng, bài tập | Mẫu — `src/data/mock.ts` | API học sinh / lớp / bài tập |
 | Bài học đã nạp | Lưu trên trình duyệt (localStorage) | API bài học |
+| Log LLM: câu hỏi / câu trả lời | **Thật** — sự kiện `GIAI_TOAN` / `DAY_HOC` / `THAC_MAC` trong `GET /events` | `GET /llm-logs` (bên dưới) |
+| Token, độ trễ, chi phí LLM | Token **ước tính** (1 từ ≈ 1.6 token, giống `ai/prompts/llm_socratic.py`); chưa có độ trễ | `GET /llm-logs` (task 5 tuần 5 của BE) |
 
 Khi BE có API: chỉ cần thay hàm trong `src/data/mock.ts`, `src/utils/stats.ts`, `src/stores/robot.ts` — giao diện giữ nguyên.
+
+### Hợp đồng API đề xuất cho nhóm BE: `GET /llm-logs`
+
+Trang `/ai-chi-phi` tự gọi API này trước; nếu chưa có (404) thì dùng `/events`, backend tắt thì dùng dữ liệu mẫu.
+Sau khi có đăng nhập (tuần 6) có thể chuyển sang `/api/v1/llm-logs` + JWT.
+
+```json
+{
+  "logs": [
+    {
+      "id": 12,
+      "timestamp": "2026-11-26 17:04:10",
+      "mode": "GIAI_TOAN",
+      "question": "3/4 + 1/2 bằng bao nhiêu?",
+      "answer": "Con thử quy đồng mẫu số trước nhé!",
+      "status": "ok",
+      "provider": "Gemini",
+      "model": "gemini-2.0-flash",
+      "input_tokens": 135,
+      "output_tokens": 42,
+      "image_tokens": 0,
+      "latency_ms": 2310,
+      "cost_usd": null
+    }
+  ]
+}
+```
+
+- `status`: `ok` | `offline` | `error`. `latency_ms` = từ lúc nhận câu hỏi tới lúc có câu trả lời (đo Q8).
+- Token lấy từ `usage` mà LLM trả về (`ai_client.py` đang log sẵn, chỉ cần lưu vào DB).
+- `cost_usd` để `null` thì web tự tính theo đơn giá nhập trên trang. **Không** trả ảnh hay base64.
 
 **Riêng tư:** web không đọc, không lưu nội dung ảnh/slide — kéo thả file chỉ lấy **tên file**.
 
