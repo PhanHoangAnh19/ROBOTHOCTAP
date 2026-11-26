@@ -299,8 +299,12 @@ def run_monitor(enable_pose: bool, enable_attention: bool, enable_gate: bool = T
         "status_code": "READY",
         "reason": "Nhan 'c' hoac giu yen vo 1s de quet Cong rieng tu",
         "faces_count": 0,
+        "face_boxes": [],
         "skin_ratio": 0.0,
+        "max_cluster_ratio": 0.0,
+        "skin_clusters": [],
         "blur_score": 0.0,
+        "is_blurry": False,
         "sanitized_image": None,
     }
     last_auto_gate_time = 0.0

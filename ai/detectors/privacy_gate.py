@@ -378,10 +378,10 @@ class PrivacyGateDetector:
         output = display_frame.copy()
         h, w = output.shape[:2]
 
-        is_safe = result["is_safe"]
-        status = result["status"]
-        status_code = result["status_code"]
-        reason = result["reason"]
+        is_safe = result.get("is_safe", False)
+        status = result.get("status", "UNKNOWN")
+        status_code = result.get("status_code", "UNKNOWN")
+        reason = result.get("reason", "")
 
         # Định màu sắc trạng thái
         if status_code == "PASSED_AUTO_ANONYMIZED":
@@ -408,16 +408,19 @@ class PrivacyGateDetector:
         cv2.putText(output, f"Chi tiet: {reason}", (25, 68), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (220, 220, 220), 1)
 
         # Thông số kỹ thuật
-        telemetry = f"Khuon mat: {result['faces_count']} | Ty le da: {result['skin_ratio']*100:.1f}% (Nguong: <=15%) | Do net: {result['blur_score']:.0f}"
+        faces_cnt = result.get("faces_count", 0)
+        skin_rat = result.get("skin_ratio", 0.0)
+        blur_sc = result.get("blur_score", 0.0)
+        telemetry = f"Khuon mat: {faces_cnt} | Ty le da: {skin_rat*100:.1f}% (Nguong: <=15%) | Do net: {blur_sc:.0f}"
         cv2.putText(output, telemetry, (25, 95), cv2.FONT_HERSHEY_SIMPLEX, 0.46, (180, 255, 180) if is_safe else (180, 180, 255), 1)
 
         # 3. Đánh dấu vị trí khuôn mặt nếu có
-        for (fx, fy, fw, fh) in result["face_boxes"]:
+        for (fx, fy, fw, fh) in result.get("face_boxes", []):
             cv2.rectangle(output, (fx, fy), (fx + fw, fy + fh), (0, 0, 255), 2)
             cv2.putText(output, "CANH BAO MAT", (fx, max(20, fy - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
 
         # 4. Đánh dấu cụm da tay nếu có
-        for (cx, cy, cw, ch, cratio) in result["skin_clusters"]:
+        for (cx, cy, cw, ch, cratio) in result.get("skin_clusters", []):
             cv2.rectangle(output, (cx, cy), (cx + cw, cy + ch), (0, 165, 255), 1)
             cv2.putText(output, f"Tay {cratio*100:.1f}%", (cx, max(15, cy - 5)), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 165, 255), 1)
 
