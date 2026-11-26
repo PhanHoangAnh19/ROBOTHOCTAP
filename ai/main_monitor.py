@@ -1,11 +1,19 @@
 """
-main_monitor.py — Màn hình giám sát tổng hợp cho Robot Học Tập.
+main_monitor.py — Màn hình giám sát tổng hợp cho Robot Học Tập (Tuần 1–5 — Cột mốc M2).
 
 Chạy:
-    python main_monitor.py              # mặc định: chạy cả Pose + Attention
+    python main_monitor.py              # mặc định: chạy cả Pose + Attention + Privacy Gate
     python main_monitor.py --pose       # chỉ giám sát tư thế ngồi
     python main_monitor.py --attention  # chỉ giám sát buồn ngủ + quay đầu
-    python main_monitor.py --all        # tường minh chạy cả 2 (giống mặc định)
+    python main_monitor.py --gate       # chỉ giám sát cắt trang vở + Cổng riêng tư (Privacy Gate)
+    python main_monitor.py --all        # tường minh chạy toàn bộ 3 luồng (giống mặc định)
+
+Phím tắt khi chạy:
+    'c' : Chụp & quét kiểm duyệt trang vở qua Cổng riêng tư + Tối ưu Token
+    'm' : Bật/Tắt chế độ [Tự động xóa/làm mờ mặt] vs [Chặn nghiêm ngặt]
+    'b' : Đổi kiểu che mặt giữa [BLUR - Làm mờ Pixelate] và [BLACKOUT - Hộp đen]
+    's' : Lưu ảnh mẫu kiểm thử vào ai/data/privacy_passed/ hoặc privacy_blocked/
+    'q' : Thoát chương trình
 """
 
 import os
@@ -28,19 +36,21 @@ from mediapipe.tasks.python import vision
 try:
     from ai.detectors.posture_math import calculate_shoulder_tilt, calculate_neck_tilt, calculate_head_desk_proxy
     from ai.detectors.face_attention import calculate_ear_single_eye, estimate_head_pose_yaw_pitch
+    from ai.detectors.page_deskew import detect_page_contour
+    from ai.detectors.page_stability import PageStabilityDetector
+    from ai.detectors.privacy_gate import PrivacyGateDetector
     from ai.analyzers.posture_tracker import PostureDebounceTracker
     from ai.clients.backend_client import BackendEventPublisher
+    from ai.utils.image_optimizer import optimize_for_llm
 except ImportError:
-    try:
-        from detectors.posture_math import calculate_shoulder_tilt, calculate_neck_tilt, calculate_head_desk_proxy
-        from detectors.face_attention import calculate_ear_single_eye, estimate_head_pose_yaw_pitch
-        from analyzers.posture_tracker import PostureDebounceTracker
-        from clients.backend_client import BackendEventPublisher
-    except ImportError:
-        from posture_math import calculate_shoulder_tilt, calculate_neck_tilt, calculate_head_desk_proxy
-        from face_attention import calculate_ear_single_eye, estimate_head_pose_yaw_pitch
-        from posture_tracker import PostureDebounceTracker
-        from backend_client import BackendEventPublisher
+    from detectors.posture_math import calculate_shoulder_tilt, calculate_neck_tilt, calculate_head_desk_proxy
+    from detectors.face_attention import calculate_ear_single_eye, estimate_head_pose_yaw_pitch
+    from detectors.page_deskew import detect_page_contour
+    from detectors.page_stability import PageStabilityDetector
+    from detectors.privacy_gate import PrivacyGateDetector
+    from analyzers.posture_tracker import PostureDebounceTracker
+    from clients.backend_client import BackendEventPublisher
+    from utils.image_optimizer import optimize_for_llm
 
 
 # ──────────────────────────────────────────────
@@ -135,15 +145,15 @@ def _process_pose(frame, h, w, detector, tracker, publisher):
     if track_info.get("alert"):
         publisher.send_posture_alert(reasons, track_info["bad_duration"],
                                      {"neck": neck_angle, "shoulder": shoulder_angle})
-        cv2.putText(frame, "CANH BAO: NGOI THANG LUNG!", (50, 180),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 255), 3)
+        cv2.putText(frame, "CANH BAO: NGOI THANG LUNG!", (50, 210),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.85, (0, 0, 255), 3)
 
     state_color = (0, 255, 0) if track_info["state"] == "GOOD" else \
                   (0, 0, 255) if track_info["state"] == "ALERT_TRIGGERED" else (0, 165, 255)
     cv2.putText(frame, f"[POSE] Neck:{neck_angle:.1f}  Shoulder:{shoulder_angle:.1f}",
-                (20, 55), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (200, 255, 200), 2)
+                (20, 55), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (200, 255, 200), 2)
     cv2.putText(frame, f"[POSE] State:{track_info['state']} Bad:{track_info['bad_duration']:.1f}s",
-                (20, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.55, state_color, 2)
+                (20, 78), cv2.FONT_HERSHEY_SIMPLEX, 0.52, state_color, 2)
 
     return neck_angle, shoulder_angle, track_info
 
@@ -175,8 +185,8 @@ def _process_attention(frame, h, w, detector, publisher,
             dur = now - drowsy_start_ref[0]
             status_ear = f"NHAM MAT ({dur:.1f}s)"
             if dur > 3.0:
-                cv2.putText(frame, "CANH BAO: BUON NGU!", (50, 220),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 255), 3)
+                cv2.putText(frame, "CANH BAO: BUON NGU!", (50, 245),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.85, (0, 0, 255), 3)
                 publisher.send_attention_alert("DROWSY", f"Nham mat {dur:.1f}s")
         else:
             drowsy_start_ref[0] = None
@@ -189,35 +199,72 @@ def _process_attention(frame, h, w, detector, publisher,
             dur = now - distracted_start_ref[0]
             status_yaw = f"QUAY DAU ({dur:.1f}s)"
             if dur > 5.0:
-                cv2.putText(frame, "CANH BAO: MAT TAP TRUNG!", (50, 255),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 165, 255), 3)
+                cv2.putText(frame, "CANH BAO: MAT TAP TRUNG!", (50, 280),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.85, (0, 165, 255), 3)
                 publisher.send_attention_alert("DISTRACTED", f"Quay dau {dur:.1f}s")
         else:
             distracted_start_ref[0] = None
             status_yaw = f"Nhin thang (Yaw:{yaw_ratio:.2f})"
 
     cv2.putText(frame, f"[ATTN] Eye: {status_ear}",
-                (20, 110), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 0), 2)
+                (20, 103), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (0, 255, 0), 2)
     cv2.putText(frame, f"[ATTN] Head: {status_yaw}",
-                (20, 135), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 200, 0), 2)
+                (20, 126), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (255, 200, 0), 2)
+
+
+def _process_page_and_gate(frame, raw_frame, h, w, stability_detector, last_gate_result: dict,
+                           auto_anonymize: bool, anonymize_mode: str):
+    """
+    Phát hiện 4 góc trang sách/vở (Deskew), kiểm tra độ ổn định (Stability)
+    và hiển thị trạng thái Cổng riêng tư (Privacy Gate).
+    """
+    corners, warped = detect_page_contour(raw_frame)
+    stability = stability_detector.check_stability(corners, warped)
+
+    if corners is not None:
+        corners_int = np.int32(corners)
+        border_color = (0, 255, 0) if stability["is_stable"] else (0, 165, 255)
+        cv2.polylines(frame, [corners_int], True, border_color, 2)
+        for i, pt in enumerate(corners_int):
+            cv2.circle(frame, tuple(pt), 5, (0, 0, 255), -1)
+            cv2.putText(frame, str(i + 1), (pt[0] - 8, pt[1] - 8),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1)
+
+    gate_color = (255, 200, 0) if last_gate_result["status_code"] == "PASSED_AUTO_ANONYMIZED" else \
+                 (0, 255, 0) if last_gate_result["is_safe"] else (0, 100, 255)
+
+    page_str = f"Trang vo: {stability['status_msg']} ({int(stability['progress']*100)}%)"
+    gate_str = f"[GATE] {last_gate_result['status']} | Auto-Blur:{'ON' if auto_anonymize else 'OFF'} ({anonymize_mode.upper()})"
+
+    cv2.putText(frame, f"[PAGE] {page_str}",
+                (20, 150), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (0, 255, 255), 2)
+    cv2.putText(frame, gate_str,
+                (20, 173), cv2.FONT_HERSHEY_SIMPLEX, 0.50, gate_color, 2)
+    cv2.putText(frame, "Phim 'c': Quet Gate & Token | 'm': Auto-Blur | 'b': Blur/Black | 's': Luu",
+                (15, h - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.44, (200, 255, 255), 1)
+
+    return corners, warped, stability
 
 
 # ──────────────────────────────────────────────
 # VÒNG LẶP CHÍNH
 # ──────────────────────────────────────────────
 
-def run_monitor(enable_pose: bool, enable_attention: bool):
+def run_monitor(enable_pose: bool, enable_attention: bool, enable_gate: bool = True):
     mode_label = []
     if enable_pose:      mode_label.append("POSE")
     if enable_attention: mode_label.append("ATTENTION")
+    if enable_gate:      mode_label.append("PRIVACY_GATE")
 
-    print("=" * 60)
-    print(f"🚀 ROBOT HỌC TẬP — MONITOR v2.0  [{' + '.join(mode_label)}]")
-    print("=" * 60)
+    print("=" * 68)
+    print(f"🚀 ROBOT HỌC TẬP — MONITOR TỔNG HỢP v3.0 (MỐC M2) [{' + '.join(mode_label)}]")
+    print("=" * 68)
 
     # Khởi tạo model cần thiết
     pose_detector = _load_pose_detector() if enable_pose else None
     face_detector = _load_face_detector() if enable_attention else None
+    privacy_gate  = PrivacyGateDetector(max_skin_ratio=0.15, max_cluster_ratio=0.08) if enable_gate else None
+    stability_det = PageStabilityDetector(required_duration=1.0, movement_threshold=10.0, max_hand_coverage=0.15) if enable_gate else None
 
     if enable_pose and pose_detector is None:
         return
@@ -226,6 +273,12 @@ def run_monitor(enable_pose: bool, enable_attention: bool):
 
     tracker   = PostureDebounceTracker(bad_duration_threshold=10.0, cooldown_seconds=120.0)
     publisher = BackendEventPublisher()
+
+    passed_dir  = os.path.join(CURRENT_DIR, "data", "privacy_passed")
+    blocked_dir = os.path.join(CURRENT_DIR, "data", "privacy_blocked")
+    if enable_gate:
+        os.makedirs(passed_dir, exist_ok=True)
+        os.makedirs(blocked_dir, exist_ok=True)
 
     cap = cv2.VideoCapture(0)
     if not cap.isOpened():
@@ -237,13 +290,36 @@ def run_monitor(enable_pose: bool, enable_attention: bool):
     drowsy_start   = [None]      # dùng list để truyền tham chiếu vào hàm con
     distract_start = [None]
 
-    print(f"✅ Camera sẵn sàng. Nhấn 'q' để dừng.")
+    auto_anonymize = True
+    anonymize_mode = "blur"
+    saved_count    = 0
+    last_gate_res  = {
+        "is_safe": True,
+        "status": "SAN_SANG",
+        "status_code": "READY",
+        "reason": "Nhan 'c' hoac giu yen vo 1s de quet Cong rieng tu",
+        "faces_count": 0,
+        "skin_ratio": 0.0,
+        "blur_score": 0.0,
+        "sanitized_image": None,
+    }
+    last_auto_gate_time = 0.0
+
+    print("✅ Camera sẵn sàng.")
+    if enable_gate:
+        print("👉 Phím tắt Cổng riêng tư (Privacy Gate):")
+        print("   - Phím 'c': Chụp & kiểm duyệt trang vở qua Privacy Gate + Tối ưu Token")
+        print("   - Phím 'm': Bật/Tắt chế độ Tự động xóa/làm mờ mặt (Auto-Anonymize)")
+        print("   - Phím 'b': Đổi kiểu che mặt BLUR (Làm mờ) / BLACKOUT (Hộp đen)")
+        print("   - Phím 's': Lưu ảnh mẫu đã kiểm duyệt")
+    print("   - Phím 'q': Thoát chương trình.")
 
     while cap.isOpened():
         ok, frame = cap.read()
         if not ok:
             break
 
+        raw_frame = frame.copy()
         h, w = frame.shape[:2]
         now  = time.time()
         dt   = now - prev_time
@@ -260,12 +336,87 @@ def run_monitor(enable_pose: bool, enable_attention: bool):
             _process_attention(frame, h, w, face_detector, publisher,
                                drowsy_start, distract_start)
 
+        warped = None
+        if enable_gate:
+            corners, warped, stability = _process_page_and_gate(
+                frame, raw_frame, h, w, stability_det, last_gate_res,
+                auto_anonymize, anonymize_mode
+            )
+            # Tự động quét Cổng riêng tư khi trang vở đứng yên đủ 1.0s (cooldown 2s)
+            if stability["is_stable"] and warped is not None and (now - last_auto_gate_time > 2.0):
+                last_auto_gate_time = now
+                last_gate_res = privacy_gate.evaluate_image(
+                    warped, auto_anonymize=auto_anonymize, anonymize_mode=anonymize_mode
+                )
+
+            # Hiển thị cửa sổ phụ trang vở đã cắt phẳng / đã xóa mặt
+            if warped is not None:
+                preview_src = last_gate_res["sanitized_image"] if (
+                    last_gate_res.get("sanitized_image") is not None and
+                    last_gate_res["sanitized_image"].shape[:2] == warped.shape[:2]
+                ) else warped
+                warped_hud = privacy_gate.draw_hud(preview_src, last_gate_res)
+                wh, ww = warped_hud.shape[:2]
+                scale = 360.0 / max(wh, ww)
+                preview_warped = cv2.resize(warped_hud, (int(ww * scale), int(wh * scale)))
+                cv2.imshow("Trang Vo & Cong Rieng Tu (Deskew + Privacy Gate)", preview_warped)
+
         cv2.putText(frame, f"FPS: {smoothed_fps:.1f}  Mode: {'+'.join(mode_label)}",
-                    (20, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2)
+                    (20, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.62, (255, 255, 255), 2)
 
         cv2.imshow("Robot Hoc Tap - Monitor", frame)
-        if cv2.waitKey(1) & 0xFF == ord('q'):
+        key = cv2.waitKey(1) & 0xFF
+        if key == ord('q'):
             break
+        elif enable_gate and key == ord('m'):
+            auto_anonymize = not auto_anonymize
+            print(f"🔄 Chế độ Auto-Anonymize (Tự động xóa mặt): {'BẬT' if auto_anonymize else 'TẮT (Chặn nghiêm ngặt)'}")
+        elif enable_gate and key == ord('b'):
+            anonymize_mode = "blackout" if anonymize_mode == "blur" else "blur"
+            print(f"🎨 Kiểu che mặt: {anonymize_mode.upper()}")
+        elif enable_gate and key == ord('c'):
+            target_img = warped if warped is not None else raw_frame
+            t0 = time.perf_counter()
+            last_gate_res = privacy_gate.evaluate_image(
+                target_img, auto_anonymize=auto_anonymize, anonymize_mode=anonymize_mode
+            )
+            gate_ms = (time.perf_counter() - t0) * 1000
+
+            print("\n" + "=" * 60)
+            print(f"🛡️  KẾT QUẢ QUÉT CỔNG RIÊNG TƯ (Độ trễ: {gate_ms:.1f} ms)")
+            print(f"  Trạng thái : {last_gate_res['status']} ({last_gate_res['status_code']})")
+            print(f"  Lý do      : {last_gate_res['reason']}")
+            print(f"  Khuôn mặt  : {last_gate_res['faces_count']} | Tỷ lệ da: {last_gate_res['skin_ratio']*100:.1f}%")
+
+            if last_gate_res["is_safe"] and last_gate_res.get("sanitized_image") is not None:
+                sanitized = last_gate_res["sanitized_image"]
+                opt_res = optimize_for_llm(sanitized)
+                print(f"  ✅ Tối ưu Token (Phúc): Giảm {opt_res['reduction_pct']}% | ~{opt_res['estimated_tokens']} tokens")
+                print("  🚀 SẴN SÀNG GỬI ẢNH ĐÃ BẢO VỆ DANH TÍNH LÊN LLM!")
+
+                sh, sw = sanitized.shape[:2]
+                scale_s = 380.0 / max(sh, sw)
+                preview_s = cv2.resize(sanitized, (int(sw * scale_s), int(sh * scale_s)))
+                cv2.imshow("Anh Da Kiem Duyet & Xoa Mat (Sanitized Payload)", preview_s)
+            else:
+                print("  🚫 CHẶN AN TOÀN: 0 byte ảnh được gửi ra Cloud!")
+            print("=" * 60 + "\n")
+        elif enable_gate and key == ord('s'):
+            target_img = warped if warped is not None else raw_frame
+            last_gate_res = privacy_gate.evaluate_image(
+                target_img, auto_anonymize=auto_anonymize, anonymize_mode=anonymize_mode
+            )
+            saved_count += 1
+            ts = int(time.time())
+            save_img = last_gate_res["sanitized_image"] if last_gate_res.get("sanitized_image") is not None else target_img
+            if last_gate_res["is_safe"]:
+                path = os.path.join(passed_dir, f"passed_{last_gate_res['status_code']}_{ts}_{saved_count:02d}.jpg")
+                cv2.imwrite(path, save_img)
+                print(f"📸 [PASSED] Đã lưu ảnh an toàn: {path}")
+            else:
+                path = os.path.join(blocked_dir, f"blocked_{last_gate_res['status_code']}_{ts}_{saved_count:02d}.jpg")
+                cv2.imwrite(path, save_img)
+                print(f"🚫 [BLOCKED] Đã lưu mẫu bị chặn: {path}")
 
     cap.release()
     cv2.destroyAllWindows()
@@ -280,17 +431,19 @@ def run_monitor(enable_pose: bool, enable_attention: bool):
 # ──────────────────────────────────────────────
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Robot Học Tập — Monitor tổng hợp")
+    parser = argparse.ArgumentParser(description="Robot Học Tập — Monitor tổng hợp (Mốc M2)")
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--pose",      action="store_true", help="Chỉ giám sát tư thế ngồi")
     group.add_argument("--attention", action="store_true", help="Chỉ giám sát buồn ngủ + quay đầu")
-    group.add_argument("--all",       action="store_true", help="Chạy cả Pose + Attention (mặc định)")
+    group.add_argument("--gate",      action="store_true", help="Chỉ giám sát cắt trang vở + Cổng riêng tư")
+    group.add_argument("--all",       action="store_true", help="Chạy cả Pose + Attention + Privacy Gate (mặc định)")
     args = parser.parse_args()
 
-    # Mặc định (không truyền gì) = chạy cả 2
     if args.pose:
-        run_monitor(enable_pose=True,  enable_attention=False)
+        run_monitor(enable_pose=True,  enable_attention=False, enable_gate=False)
     elif args.attention:
-        run_monitor(enable_pose=False, enable_attention=True)
+        run_monitor(enable_pose=False, enable_attention=True,  enable_gate=False)
+    elif args.gate:
+        run_monitor(enable_pose=False, enable_attention=False, enable_gate=True)
     else:
-        run_monitor(enable_pose=True,  enable_attention=True)
+        run_monitor(enable_pose=True,  enable_attention=True,  enable_gate=True)
