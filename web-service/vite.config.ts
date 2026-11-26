@@ -16,6 +16,7 @@ export default defineConfig({
       '/events': API,
       '/sensor-event': API,
       '/ask-ai': API,
+      '/llm-logs': API,
     },
   },
 })
