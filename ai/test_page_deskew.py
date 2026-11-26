@@ -28,7 +28,7 @@ def run_page_deskew_demo():
     save_dir = os.path.join(CURRENT_DIR, "data", "deskewed_samples")
     os.makedirs(save_dir, exist_ok=True)
 
-    stability_detector = PageStabilityDetector(required_duration=1.0, movement_threshold=10.0, max_hand_coverage=0.15)
+    stability_detector = PageStabilityDetector(required_duration=1.0, movement_threshold=18.0, max_hand_coverage=0.15)
 
     cap = cv2.VideoCapture(0)
     if not cap.isOpened():

@@ -9,7 +9,7 @@ class PageStabilityDetector:
     2. Không bị che: Không có bàn tay bé che đè lên nội dung trang vở (> 12% diện tích da).
     3. Thời gian ổn định: Duy trì cả 2 điều kiện trên liên tục >= 1.0 giây.
     """
-    def __init__(self, required_duration=1.0, movement_threshold=8.0, max_hand_coverage=0.12):
+    def __init__(self, required_duration=1.0, movement_threshold=18.0, max_hand_coverage=0.15):
         self.required_duration = required_duration
         self.movement_threshold = movement_threshold
         self.max_hand_coverage = max_hand_coverage
@@ -21,17 +21,18 @@ class PageStabilityDetector:
     def detect_skin_coverage(self, warped_page):
         """
         Phát hiện tỷ lệ vùng da tay trên bề mặt trang vở đã cắt (Deskewed).
-        Sử dụng không gian màu HSV chuẩn cho da người Châu Á / Việt Nam.
+        Kết hợp HSV + YCrCb để không nhận nhầm giấy ngả vàng dưới đèn phòng hoặc hình vẽ màu cam/vàng là da tay.
         """
         if warped_page is None or warped_page.size == 0:
             return 0.0
 
         hsv = cv2.cvtColor(warped_page, cv2.COLOR_BGR2HSV)
-        # Dải màu da: H: 0-25, S: 30-180, V: 60-255
-        lower_skin = np.array([0, 30, 60], dtype=np.uint8)
-        upper_skin = np.array([25, 180, 255], dtype=np.uint8)
+        mask_hsv = cv2.inRange(hsv, np.array([0, 30, 60], dtype=np.uint8), np.array([25, 200, 255], dtype=np.uint8))
 
-        mask = cv2.inRange(hsv, lower_skin, upper_skin)
+        ycrcb = cv2.cvtColor(warped_page, cv2.COLOR_BGR2YCrCb)
+        mask_ycrcb = cv2.inRange(ycrcb, np.array([0, 135, 77], dtype=np.uint8), np.array([255, 173, 127], dtype=np.uint8))
+
+        mask = cv2.bitwise_and(mask_hsv, mask_ycrcb)
         skin_pixels = cv2.countNonZero(mask)
         total_pixels = warped_page.shape[0] * warped_page.shape[1]
 
@@ -64,14 +65,16 @@ class PageStabilityDetector:
                 "status_msg": "Chua phat hien trang sach/vo"
             }
 
-        # 1. Đo độ dịch chuyển so với frame trước
+        # 1. Đo độ dịch chuyển so với frame trước (có làm mượt EMA chống nhảy góc)
+        curr_pts = np.asarray(current_corners, dtype=np.float32)
         movement = 0.0
         if self.last_corners is not None:
-            # Khoảng cách Euclidean trung bình của 4 đỉnh
-            diff = np.linalg.norm(current_corners - self.last_corners, axis=1)
+            smoothed_pts = 0.65 * self.last_corners + 0.35 * curr_pts
+            diff = np.linalg.norm(smoothed_pts - self.last_corners, axis=1)
             movement = float(np.mean(diff))
-
-        self.last_corners = current_corners.copy()
+            self.last_corners = smoothed_pts
+        else:
+            self.last_corners = curr_pts.copy()
 
         # 2. Kiểm tra tay che
         skin_coverage = self.detect_skin_coverage(warped_page)

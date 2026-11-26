@@ -301,7 +301,7 @@ def run_monitor(enable_pose: bool, enable_attention: bool, enable_gate: bool = T
     privacy_gate  = PrivacyGateDetector(
         max_skin_ratio=0.15, max_cluster_ratio=0.08, shared_face_detector=face_detector
     ) if enable_gate else None
-    stability_det = PageStabilityDetector(required_duration=1.0, movement_threshold=10.0, max_hand_coverage=0.15) if enable_gate else None
+    stability_det = PageStabilityDetector(required_duration=1.0, movement_threshold=18.0, max_hand_coverage=0.15) if enable_gate else None
 
     if enable_pose and pose_detector is None:
         return
