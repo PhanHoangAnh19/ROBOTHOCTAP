@@ -338,25 +338,27 @@ def measure_prompt_latency(question: str, guidance: str) -> dict:
     }
 
 
-def measure_image_token_cost(width: int = 800, height: int = 600) -> dict:
+def measure_image_token_cost(width: int = 1280, height: int = 960) -> dict:
     """
-    Tạo ảnh tổng hợp giả lập trang vở (nền trắng, chữ bút chì xám) rồi
-    chạy qua optimize_for_llm() để lấy estimated_tokens thực tế.
-
-    Args:
-        width, height: Kích thước ảnh giả lập (px).
-
-    Returns:
-        dict với original_size_kb, optimized_size_kb, reduction_pct,
-              estimated_tokens, final_resolution
+    Đo hiệu quả nén ảnh công bằng (JPEG gốc Q95 vs JPEG tối ưu) và token theo pixel (W×H/750).
+    Ưu tiên đọc ảnh chụp trang vở thực tế từ group4_clean_page (nếu có),
+    hoặc tạo ảnh trang vở độ phân giải Pi Camera / điện thoại (1280×960).
     """
+    import cv2
     import numpy as np
 
-    # Nền trắng, thêm nhiễu nhẹ giả lập chữ viết tay
-    img = np.full((height, width, 3), 245, dtype="uint8")
-    rng = np.random.default_rng(42)
-    noise = rng.integers(0, 30, (height, width, 3), dtype="uint8")
-    img = (img.astype("int16") - noise).clip(0, 255).astype("uint8")
+    clean_dir = os.path.join(_AI_DIR, "data", "adversarial_tests", "group4_clean_page")
+    img = None
+    if os.path.exists(clean_dir):
+        jpgs = sorted([f for f in os.listdir(clean_dir) if f.lower().endswith(".jpg")])
+        if jpgs:
+            img = cv2.imread(os.path.join(clean_dir, jpgs[0]))
+
+    if img is None:
+        img = np.full((height, width, 3), 245, dtype="uint8")
+        rng = np.random.default_rng(42)
+        noise = rng.integers(0, 30, (height, width, 3), dtype="uint8")
+        img = (img.astype("int16") - noise).clip(0, 255).astype("uint8")
 
     result = optimize_for_llm(img)
     return {

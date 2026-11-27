@@ -19,10 +19,10 @@ import numpy as np
 # CÁC HẰNG SỐ MẶC ĐỊNH
 # ──────────────────────────────────────────────
 
-DEFAULT_MAX_WIDTH   = 800    # px — chiều rộng tối đa sau downscale
-DEFAULT_JPEG_QUALITY = 82    # 0–100, 82 là điểm cân bằng chất lượng/kích thước tốt
-CLAHE_CLIP_LIMIT    = 2.5    # Giới hạn khuếch đại CLAHE (cao hơn = tương phản mạnh hơn)
-CLAHE_TILE_GRID     = (8, 8) # Kích thước ô lưới CLAHE
+DEFAULT_MAX_WIDTH    = 520    # px — thu nhỏ cả ảnh Pi Camera/điện thoại (1280px) lẫn webcam (640px)
+DEFAULT_JPEG_QUALITY = 70     # 0–100, tối ưu dung lượng giảm >= 70% so với JPEG gốc Q95
+CLAHE_CLIP_LIMIT     = 2.0    # Giới hạn khuếch đại CLAHE giữ chữ nét mà không tăng nhiễu hạt JPEG
+CLAHE_TILE_GRID      = (8, 8) # Kích thước ô lưới CLAHE
 
 
 # ──────────────────────────────────────────────
@@ -99,21 +99,33 @@ def encode_jpeg(image: np.ndarray, quality: int = DEFAULT_JPEG_QUALITY) -> bytes
     return buffer.tobytes()
 
 
-def estimate_tokens_from_image(image_bytes: bytes) -> int:
+def estimate_tokens_from_image(image_bytes: bytes, width: int = None, height: int = None) -> int:
     """
-    Ước tính số token tiêu thụ khi gửi ảnh lên LLM Vision API dưới dạng base64.
+    Ước tính số token tiêu thụ khi gửi ảnh lên LLM Vision API (Claude / Gemini / GPT Vision).
 
-    Cách tính: Claude/GPT Vision tính token dựa trên kích thước ảnh.
-    Công thức xấp xỉ thực nghiệm: 1 token ≈ 750 bytes base64.
+    Cách tính chuẩn theo tài liệu Vision API:
+        Token ảnh được tính theo diện tích điểm ảnh (pixel):
+            tokens ≈ (width × height) / 750
+        Ví dụ: Ảnh 640×480 ≈ 410 tokens; ảnh sau thu nhỏ 520×390 ≈ 270 tokens.
 
     Args:
         image_bytes: Ảnh dạng bytes (đã nén JPEG).
+        width:       Chiều rộng ảnh (tự giải mã từ image_bytes nếu không truyền).
+        height:      Chiều cao ảnh (tự giải mã từ image_bytes nếu không truyền).
 
     Returns:
-        Số token ước tính (int).
+        Số token ước tính theo diện tích pixel (int).
     """
-    b64_len = len(base64.b64encode(image_bytes))
-    return max(1, int(b64_len / 750))
+    if width is None or height is None:
+        arr = np.frombuffer(image_bytes, dtype=np.uint8)
+        decoded = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+        if decoded is not None:
+            height, width = decoded.shape[:2]
+        else:
+            b64_len = len(base64.b64encode(image_bytes))
+            return max(1, int(b64_len / 750))
+
+    return max(1, int((width * height) / 750))
 
 
 # ──────────────────────────────────────────────
@@ -126,30 +138,20 @@ def optimize_for_llm(
     jpeg_quality: int = DEFAULT_JPEG_QUALITY,
 ) -> dict:
     """
-    Pipeline tổng hợp: nhận ảnh thô từ page_deskew.py, trả ra dict sẵn sàng gửi API.
+    Pipeline tổng hợp: nhận ảnh từ page_deskew.py, trả ra dict sẵn sàng gửi API.
 
     Thứ tự xử lý:
-        1. Downscale về max_width
-        2. Tăng tương phản CLAHE
-        3. Nén JPEG
-        4. Ước tính token
-
-    Args:
-        image:        Ảnh numpy array BGR (đầu ra từ page_deskew.py của Quốc).
-        max_width:    Chiều rộng tối đa (px).
-        jpeg_quality: Chất lượng nén JPEG (0–100).
-
-    Returns:
-        dict với các key:
-            "image_bytes"     : bytes  — JPEG bytes sẵn sàng encode base64 gửi API
-            "estimated_tokens": int    — ước tính token tiêu thụ
-            "original_size_kb": float  — kích thước ảnh gốc (KB)
-            "optimized_size_kb": float — kích thước ảnh sau tối ưu (KB)
-            "reduction_pct"   : float  — phần trăm giảm kích thước
-            "final_resolution": tuple  — (width, height) sau xử lý
+        1. Đo kích thước JPEG gốc chuẩn (Q=95) trước khi xử lý để so sánh công bằng
+        2. Downscale về max_width (mặc định 520px — thu nhỏ cả ảnh 1280px lẫn 640px)
+        3. Tăng tương phản CLAHE
+        4. Nén JPEG ở mức jpeg_quality
+        5. Ước tính token theo diện tích pixel (width × height) / 750
     """
-    # Kích thước ảnh gốc (ước tính từ numpy array raw)
-    original_size_kb = image.nbytes / 1024.0
+    # Kích thước JPEG gốc (Q=95) trước khi tối ưu để so sánh công bằng JPEG vs JPEG
+    orig_jpeg_bytes = encode_jpeg(image, quality=95)
+    original_size_kb = len(orig_jpeg_bytes) / 1024.0
+    orig_h, orig_w = image.shape[:2]
+    original_tokens = estimate_tokens_from_image(orig_jpeg_bytes, width=orig_w, height=orig_h)
 
     # Bước 1: Thu nhỏ
     img = downscale(image, max_width)
@@ -160,16 +162,18 @@ def optimize_for_llm(
     # Bước 3: Nén JPEG
     image_bytes = encode_jpeg(img, jpeg_quality)
 
-    # Bước 4: Thống kê
+    # Bước 4: Thống kê công bằng (JPEG gốc Q95 vs JPEG đã tối ưu)
     optimized_size_kb = len(image_bytes) / 1024.0
-    reduction_pct = (1.0 - optimized_size_kb / original_size_kb) * 100.0
+    reduction_pct = (1.0 - optimized_size_kb / max(0.1, original_size_kb)) * 100.0
     h, w = img.shape[:2]
+    estimated_tokens = estimate_tokens_from_image(image_bytes, width=w, height=h)
 
     return {
-        "image_bytes":      image_bytes,
-        "estimated_tokens": estimate_tokens_from_image(image_bytes),
-        "original_size_kb": round(original_size_kb, 1),
+        "image_bytes":       image_bytes,
+        "estimated_tokens":  estimated_tokens,
+        "original_tokens":   original_tokens,
+        "original_size_kb":  round(original_size_kb, 1),
         "optimized_size_kb": round(optimized_size_kb, 1),
-        "reduction_pct":    round(reduction_pct, 1),
-        "final_resolution": (w, h),
+        "reduction_pct":     round(reduction_pct, 1),
+        "final_resolution":  (w, h),
     }

@@ -26,3 +26,5 @@ typing_extensions==4.16.0
 tzdata==2026.5
 wheel==0.48.0
 requests
+mediapipe<0.11
+

@@ -163,9 +163,13 @@ def _process_pose(frame, h, w, detector, tracker, publisher, run_inference: bool
 
 
 def _process_attention(frame, h, w, detector, publisher,
-                       drowsy_start_ref: list, distracted_start_ref: list,
+                       drowsy_tracker: PostureDebounceTracker,
+                       distract_tracker: PostureDebounceTracker,
                        run_inference: bool, face_cache: dict):
-    """Phát hiện nhắm mắt + quay đầu (chạy inference xen kẽ để giữ FPS cao)."""
+    """
+    Phát hiện nhắm mắt + quay đầu sử dụng PostureDebounceTracker riêng biệt
+    với thời gian chờ cooldown 120s (2 phút) đồng bộ với phần tư thế ngồi.
+    """
     if run_inference:
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         face_cache["result"] = detector.detect(mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb))
@@ -173,7 +177,11 @@ def _process_attention(frame, h, w, detector, publisher,
     result = face_cache.get("result")
     status_ear = "Mo mat"
     status_yaw = "Nhin thang"
-    now = time.time()
+
+    is_drowsy = False
+    looking_away = False
+    avg_ear = 0.0
+    yaw_ratio = 0.0
 
     if result and result.face_landmarks:
         lm     = result.face_landmarks[0]
@@ -184,39 +192,36 @@ def _process_attention(frame, h, w, detector, publisher,
         avg_ear   = (ear_left + ear_right) / 2.0
 
         yaw_ratio, looking_away = estimate_head_pose_yaw_pitch(pts_2d)
+        is_drowsy = avg_ear < 0.20
 
-        # Nhắm mắt
-        if avg_ear < 0.20:
-            if drowsy_start_ref[0] is None:
-                drowsy_start_ref[0] = now
-            dur = now - drowsy_start_ref[0]
-            status_ear = f"NHAM MAT ({dur:.1f}s)"
-            if dur > 3.0:
-                cv2.putText(frame, "CANH BAO: BUON NGU!", (50, 250),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.85, (0, 0, 255), 3)
-                publisher.send_attention_alert("DROWSY", f"Nham mat {dur:.1f}s")
-        else:
-            drowsy_start_ref[0] = None
-            status_ear = f"Mo mat (EAR:{avg_ear:.2f})"
+    # 1. Cập nhật bộ đếm Debounce + Cooldown 120s cho Buồn ngủ (DROWSY)
+    drowsy_info = drowsy_tracker.update(is_drowsy, [f"Nham mat (EAR:{avg_ear:.2f})"] if is_drowsy else [])
+    if is_drowsy:
+        status_ear = f"NHAM MAT ({drowsy_info['bad_duration']:.1f}s | {drowsy_info['state']})"
+    elif result and result.face_landmarks:
+        status_ear = f"Mo mat (EAR:{avg_ear:.2f} | {drowsy_info['state']})"
 
-        # Quay đầu
-        if looking_away:
-            if distracted_start_ref[0] is None:
-                distracted_start_ref[0] = now
-            dur = now - distracted_start_ref[0]
-            status_yaw = f"QUAY DAU ({dur:.1f}s)"
-            if dur > 5.0:
-                cv2.putText(frame, "CANH BAO: MAT TAP TRUNG!", (50, 285),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.85, (0, 165, 255), 3)
-                publisher.send_attention_alert("DISTRACTED", f"Quay dau {dur:.1f}s")
-        else:
-            distracted_start_ref[0] = None
-            status_yaw = f"Nhin thang (Yaw:{yaw_ratio:.2f})"
+    if drowsy_info.get("alert"):
+        cv2.putText(frame, "CANH BAO: BUON NGU!", (50, 250),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.85, (0, 0, 255), 3)
+        publisher.send_attention_alert("DROWSY", f"Nhắm mắt liên tục {drowsy_info['bad_duration']:.1f}s")
+
+    # 2. Cập nhật bộ đếm Debounce + Cooldown 120s cho Quay đầu (DISTRACTED)
+    distract_info = distract_tracker.update(looking_away, [f"Quay dau (Yaw:{yaw_ratio:.2f})"] if looking_away else [])
+    if looking_away:
+        status_yaw = f"QUAY DAU ({distract_info['bad_duration']:.1f}s | {distract_info['state']})"
+    elif result and result.face_landmarks:
+        status_yaw = f"Nhin thang (Yaw:{yaw_ratio:.2f} | {distract_info['state']})"
+
+    if distract_info.get("alert"):
+        cv2.putText(frame, "CANH BAO: MAT TAP TRUNG!", (50, 285),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.85, (0, 165, 255), 3)
+        publisher.send_attention_alert("DISTRACTED", f"Quay đầu mất tập trung liên tục {distract_info['bad_duration']:.1f}s")
 
     cv2.putText(frame, f"[ATTN] Eye: {status_ear}",
-                (20, 103), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (0, 255, 0), 2)
+                (20, 103), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (0, 255, 0), 2)
     cv2.putText(frame, f"[ATTN] Head: {status_yaw}",
-                (20, 126), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (255, 200, 0), 2)
+                (20, 126), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (255, 200, 0), 2)
 
 
 def _process_page_and_gate(frame, raw_frame, h, w, stability_detector, last_gate_result: dict,
@@ -285,14 +290,14 @@ def _show_gate_subwindow(privacy_gate, source_img, gate_res, subwindow_positione
 # VÒNG LẶP CHÍNH
 # ──────────────────────────────────────────────
 
-def run_monitor(enable_pose: bool, enable_attention: bool, enable_gate: bool = True):
+def run_monitor(enable_pose: bool, enable_attention: bool, enable_gate: bool = True, save_samples: bool = False):
     mode_label = []
     if enable_pose:      mode_label.append("POSE")
     if enable_attention: mode_label.append("ATTENTION")
     if enable_gate:      mode_label.append("PRIVACY_GATE")
 
     print("=" * 68)
-    print(f"🚀 ROBOT HỌC TẬP — MONITOR TỔNG HỢP v3.1 (MỐC M2) [{' + '.join(mode_label)}]")
+    print(f"🚀 ROBOT HỌC TẬP — MONITOR TỔNG HỢP v3.2 (MỐC M2) [{' + '.join(mode_label)}]")
     print("=" * 68)
 
     # Khởi tạo model cần thiết (Chia sẻ chung face_detector & pose_detector để không tốn gấp đôi RAM/CPU)
@@ -309,12 +314,22 @@ def run_monitor(enable_pose: bool, enable_attention: bool, enable_gate: bool = T
     if enable_attention and face_detector is None:
         return
 
-    tracker   = PostureDebounceTracker(bad_duration_threshold=10.0, cooldown_seconds=120.0)
+    # Đọc ngưỡng cảnh báo từ API /api/v1/settings của BE (fallback an toàn: 10s, 120s, 3s)
     publisher = BackendEventPublisher()
+    cfg = publisher.fetch_settings(default_bad_threshold=10.0, default_cooldown=120.0, default_debounce=3.0)
+    bad_thresh = cfg["posture_bad_threshold_seconds"]
+    cooldown_sec = cfg["reminder_cooldown_seconds"]
+    attn_debounce = cfg["debounce_seconds"]
+    print(f"⚙️  Ngưỡng cấu hình ({cfg['source']}): Tư thế sai={bad_thresh:.0f}s | Tập trung={attn_debounce:.0f}s | Cooldown={cooldown_sec:.0f}s")
+
+    # Mỗi luồng cảnh báo dùng PostureDebounceTracker riêng với Cooldown 120s đồng bộ
+    tracker          = PostureDebounceTracker(bad_duration_threshold=bad_thresh, cooldown_seconds=cooldown_sec)
+    drowsy_tracker   = PostureDebounceTracker(bad_duration_threshold=attn_debounce, cooldown_seconds=cooldown_sec)
+    distract_tracker = PostureDebounceTracker(bad_duration_threshold=max(5.0, attn_debounce), cooldown_seconds=cooldown_sec)
 
     passed_dir  = os.path.join(CURRENT_DIR, "data", "privacy_passed")
     blocked_dir = os.path.join(CURRENT_DIR, "data", "privacy_blocked")
-    if enable_gate:
+    if enable_gate and save_samples:
         os.makedirs(passed_dir, exist_ok=True)
         os.makedirs(blocked_dir, exist_ok=True)
 
@@ -325,8 +340,6 @@ def run_monitor(enable_pose: bool, enable_attention: bool, enable_gate: bool = T
 
     prev_time      = time.time()
     smoothed_fps   = 0.0
-    drowsy_start   = [None]
-    distract_start = [None]
     frame_idx      = 0
 
     pose_cache = {"result": None}
@@ -360,7 +373,10 @@ def run_monitor(enable_pose: bool, enable_attention: bool, enable_gate: bool = T
         print("   - Phím 'c': Chụp & kiểm duyệt qua Privacy Gate (Tự động làm mờ mặt + Tối ưu Token)")
         print("   - Phím 'm': Bật/Tắt chế độ Tự động xóa/làm mờ mặt (Auto-Anonymize)")
         print("   - Phím 'b': Đổi kiểu che mặt BLUR (Làm mờ Pixelate) / BLACKOUT (Hộp đen)")
-        print("   - Phím 's': Lưu ảnh mẫu đã kiểm duyệt")
+        if save_samples:
+            print("   - Phím 's': Lưu ảnh mẫu đã kiểm duyệt (--save-samples đang BẬT)")
+        else:
+            print("   - [Q10] Chế độ mặc định 0 byte ảnh ghi ra đĩa (thêm --save-samples nếu cần lưu mẫu)")
     print("   - Phím 'q': Thoát chương trình.")
 
     while cap.isOpened():
@@ -390,7 +406,7 @@ def run_monitor(enable_pose: bool, enable_attention: bool, enable_gate: bool = T
 
         if enable_attention:
             _process_attention(frame, h, w, face_detector, publisher,
-                               drowsy_start, distract_start, run_attn_inf, face_cache)
+                               drowsy_tracker, distract_tracker, run_attn_inf, face_cache)
 
         warped = None
         if enable_gate:
@@ -458,6 +474,9 @@ def run_monitor(enable_pose: bool, enable_attention: bool, enable_gate: bool = T
                 print("  🚫 CHẶN AN TOÀN: 0 byte ảnh được gửi ra Cloud!")
             print("=" * 60 + "\n")
         elif enable_gate and key == ord('s'):
+            if not save_samples:
+                print("🔒 [Q10 Privacy-by-Design] Mặc định tắt lưu ảnh xuống đĩa (0 byte ghi đĩa). Chạy kèm cờ --save-samples nếu cần lưu mẫu test.")
+                continue
             target_img = last_captured_target if last_captured_target is not None else (warped if warped is not None else raw_frame)
             last_captured_target = target_img.copy()
             last_gate_res = privacy_gate.evaluate_image(
@@ -495,13 +514,14 @@ if __name__ == "__main__":
     group.add_argument("--attention", action="store_true", help="Chỉ giám sát buồn ngủ + quay đầu")
     group.add_argument("--gate",      action="store_true", help="Chỉ giám sát cắt trang vở + Cổng riêng tư")
     group.add_argument("--all",       action="store_true", help="Chạy cả Pose + Attention + Privacy Gate (mặc định)")
+    parser.add_argument("--save-samples", action="store_true", help="Cho phép phím 's' lưu ảnh mẫu test xuống đĩa (mặc định tắt để đảm bảo Q10: 0 byte ghi đĩa)")
     args = parser.parse_args()
 
     if args.pose:
-        run_monitor(enable_pose=True,  enable_attention=False, enable_gate=False)
+        run_monitor(enable_pose=True,  enable_attention=False, enable_gate=False, save_samples=args.save_samples)
     elif args.attention:
-        run_monitor(enable_pose=False, enable_attention=True,  enable_gate=False)
+        run_monitor(enable_pose=False, enable_attention=True,  enable_gate=False, save_samples=args.save_samples)
     elif args.gate:
-        run_monitor(enable_pose=False, enable_attention=False, enable_gate=True)
+        run_monitor(enable_pose=False, enable_attention=False, enable_gate=True,  save_samples=args.save_samples)
     else:
-        run_monitor(enable_pose=True,  enable_attention=True,  enable_gate=True)
+        run_monitor(enable_pose=True,  enable_attention=True,  enable_gate=True,  save_samples=args.save_samples)

@@ -80,11 +80,11 @@ def print_report(result: dict) -> None:
     print("\n" + "=" * 55)
     print("📊 KẾT QUẢ TỐI ƯU ẢNH")
     print("=" * 55)
-    print(f"  Kích thước gốc (raw numpy) : {result['original_size_kb']:>8.1f} KB")
+    print(f"  Kích thước gốc (JPEG Q=95) : {result['original_size_kb']:>8.1f} KB")
     print(f"  Kích thước sau tối ưu      : {result['optimized_size_kb']:>8.1f} KB")
-    print(f"  Mức giảm                   : {result['reduction_pct']:>7.1f} %")
+    print(f"  Mức giảm (JPEG vs JPEG)    : {result['reduction_pct']:>7.1f} %")
     print(f"  Độ phân giải cuối          : {result['final_resolution'][0]}×{result['final_resolution'][1]} px")
-    print(f"  Ước tính token API         : ~{result['estimated_tokens']} tokens")
+    print(f"  Ước tính token API (W×H/750): ~{result['estimated_tokens']} tokens")
     print("=" * 55)
 
     # Nhận xét đạt/không đạt mục tiêu
